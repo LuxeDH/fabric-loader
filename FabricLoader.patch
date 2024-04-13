@@ -1,0 +1,92 @@
+diff --git a/build.gradle b/build.gradle
+index 92ed290..cfb11ca 100644
+--- a/build.gradle
++++ b/build.gradle
+@@ -45,6 +45,10 @@ allprojects {
+ 				excludeGroupByRegex "org.ow2.asm"
+ 			}
+ 		}
++		maven {
++			url "https://oss.sonatype.org/content/repositories/snapshots"
++		}
++		mavenLocal()
+ 	}
+ }
+ 
+@@ -81,6 +85,10 @@ dependencies {
+ 	include 'org.ow2.sat4j:org.ow2.sat4j.core:2.3.6'
+ 	include 'org.ow2.sat4j:org.ow2.sat4j.pb:2.3.6'
+ 
++	api "pro.gravit.launcher:launcher-core:5.4.4"
++	api "pro.gravit.launcher:launcher-ws-api:5.4.4"
++	api "pro.gravit.launcher:launcher-client-api:5.4.4"
++
+ 	testCompileOnly 'org.jetbrains:annotations:23.0.0'
+ 
+ 	// Unit testing for mod metadata
+diff --git a/src/main/java/net/fabricmc/loader/impl/launch/knot/KnotClassDelegate.java b/src/main/java/net/fabricmc/loader/impl/launch/knot/KnotClassDelegate.java
+index 0b7c38e..d2c075e 100644
+--- a/src/main/java/net/fabricmc/loader/impl/launch/knot/KnotClassDelegate.java
++++ b/src/main/java/net/fabricmc/loader/impl/launch/knot/KnotClassDelegate.java
+@@ -214,6 +214,8 @@ final class KnotClassDelegate<T extends ClassLoader & ClassLoaderAccess> impleme
+ 			if (c == null) {
+ 				if (name.startsWith("java.")) { // fast path for java.** (can only be loaded by the platform CL anyway)
+ 					c = PLATFORM_CLASS_LOADER.loadClass(name);
++				} else if (name.startsWith("pro.gravit.launcher.") || name.startsWith("pro.gravit.utils.")) { // launcher
++					c = KnotClassDelegate.class.getClassLoader().loadClass(name);
+ 				} else {
+ 					c = tryLoadClass(name, false); // try local load
+ 
+diff --git a/src/main/java/net/fabricmc/loader/impl/launch/knot/KnotClassLoader.java b/src/main/java/net/fabricmc/loader/impl/launch/knot/KnotClassLoader.java
+index 711dbfc..da0edf6 100644
+--- a/src/main/java/net/fabricmc/loader/impl/launch/knot/KnotClassLoader.java
++++ b/src/main/java/net/fabricmc/loader/impl/launch/knot/KnotClassLoader.java
+@@ -25,6 +25,8 @@ import java.security.SecureClassLoader;
+ import java.util.Enumeration;
+ import java.util.Objects;
+ 
++import pro.gravit.launcher.api.ClientService;
++
+ import net.fabricmc.api.EnvType;
+ import net.fabricmc.loader.impl.game.GameProvider;
+ import net.fabricmc.loader.impl.launch.knot.KnotClassDelegate.ClassLoaderAccess;
+@@ -50,11 +52,23 @@ final class KnotClassLoader extends SecureClassLoader implements ClassLoaderAcce
+ 	private final ClassLoader originalLoader;
+ 	private final KnotClassDelegate<KnotClassLoader> delegate;
+ 
++	private final boolean useLauncherFindLibrary;
++
+ 	KnotClassLoader(boolean isDevelopment, EnvType envType, GameProvider provider) {
+ 		super(new DynamicURLClassLoader(new URL[0]));
+ 		this.originalLoader = getClass().getClassLoader();
+ 		this.urlLoader = (DynamicURLClassLoader) getParent();
+ 		this.delegate = new KnotClassDelegate<>(isDevelopment, envType, this, originalLoader, provider);
++		boolean isClient;
++
++		try {
++			Class.forName("pro.gravit.launcher.api.ClientService");
++			isClient = true;
++		} catch (ClassNotFoundException e) {
++			isClient = false;
++		}
++
++		useLauncherFindLibrary = isClient;
+ 	}
+ 
+ 	KnotClassDelegate<?> getDelegate() {
+@@ -117,6 +131,15 @@ final class KnotClassLoader extends SecureClassLoader implements ClassLoaderAcce
+ 		return delegate.tryLoadClass(name, false);
+ 	}
+ 
++	@Override
++	protected String findLibrary(String libname) {
++		if (useLauncherFindLibrary) {
++			return ClientService.findLibrary(libname);
++		} else {
++			return super.findLibrary(libname);
++		}
++	}
++
+ 	@Override
+ 	public void addUrlFwd(URL url) {
+ 		urlLoader.addURL(url);
